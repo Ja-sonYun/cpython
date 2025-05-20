@@ -73,6 +73,10 @@ struct compiler_unit {
     _PyCompile_FBlockInfo u_fblock[CO_MAXBLOCKS];
 
     _PyCompile_CodeUnitMetadata u_metadata;
+
+    expr_ty *deferred_calls;
+    Py_ssize_t deferred_count;
+    Py_ssize_t deferred_alloc;
 };
 
 /* This struct captures the global state of a compilation.
@@ -193,6 +197,7 @@ compiler_unit_free(struct compiler_unit *u)
     Py_CLEAR(u->u_static_attributes);
     Py_CLEAR(u->u_deferred_annotations);
     Py_CLEAR(u->u_conditional_annotation_indices);
+    PyMem_Free(u->deferred_calls);
     PyMem_Free(u);
 }
 
@@ -685,6 +690,10 @@ _PyCompile_EnterScope(compiler *c, identifier name, int scope_type,
     }
     u->u_stashed_instr_sequence = NULL;
 
+    u->deferred_calls = NULL;
+    u->deferred_count = 0;
+    u->deferred_alloc = 0;
+
     /* Push the old compiler_unit on the stack. */
     if (c->u) {
         PyObject *capsule = PyCapsule_New(c->u, CAPSULE_NAME, NULL);
@@ -1130,6 +1139,44 @@ _PyCompile_LeaveConditionalBlock(struct _PyCompiler *c)
     assert(c->u->u_in_conditional_block > 0);
     c->u->u_in_conditional_block--;
 }
+
+int
+_PyCompile_PushDeferredCall(compiler *c, expr_ty e)
+{
+    struct compiler_unit *u = c->u;
+    if (u->deferred_count >= u->deferred_alloc) {
+        Py_ssize_t new_alloc = u->deferred_alloc ? u->deferred_alloc * 2 : 4;
+        expr_ty *new_buf = PyMem_Realloc(u->deferred_calls,
+                                         new_alloc * sizeof(expr_ty));
+        if (!new_buf) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        u->deferred_calls = new_buf;
+        u->deferred_alloc = new_alloc;
+    }
+    u->deferred_calls[u->deferred_count++] = e;
+    return 0;
+}
+
+Py_ssize_t
+_PyCompile_NumDeferredCalls(compiler *c)
+{
+    return c->u->deferred_count;
+}
+
+expr_ty
+_PyCompile_GetDeferredCall(compiler *c, Py_ssize_t i)
+{
+    return c->u->deferred_calls[i];
+}
+
+void
+_PyCompile_ClearDeferredCalls(compiler *c)
+{
+    c->u->deferred_count = 0;
+}
+
 
 int
 _PyCompile_AddDeferredAnnotation(compiler *c, stmt_ty s,

@@ -44,6 +44,7 @@ struct ast_state {
     PyObject *Compare_type;
     PyObject *Constant_type;
     PyObject *Continue_type;
+    PyObject *Defer_type;
     PyObject *Del_singleton;
     PyObject *Del_type;
     PyObject *Delete_type;
@@ -188,6 +189,7 @@ struct ast_state {
     PyObject *decorator_list;
     PyObject *default_value;
     PyObject *defaults;
+    PyObject *deferred;
     PyObject *elt;
     PyObject *elts;
     PyObject *end_col_offset;

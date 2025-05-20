@@ -1141,6 +1141,18 @@ codegen_function_annotations(compiler *c, location loc,
 }
 
 static int
+codegen_visit_defer(compiler *c)
+{
+    Py_ssize_t n = _PyCompile_NumDeferredCalls(c);
+    for (Py_ssize_t i = n - 1; i >= 0; --i) {
+        expr_ty e = _PyCompile_GetDeferredCall(c, i);
+        VISIT(c, expr, e);
+    }
+    _PyCompile_ClearDeferredCalls(c);
+    return SUCCESS;
+}
+
+static int
 codegen_defaults(compiler *c, arguments_ty args,
                         location loc)
 {
@@ -1373,6 +1385,7 @@ codegen_function_body(compiler *c, stmt_ty s, int is_async, Py_ssize_t funcflags
         RETURN_IF_ERROR_IN_SCOPE(c, codegen_wrap_in_stopiteration_handler(c));
         _PyCompile_PopFBlock(c, COMPILE_FBLOCK_STOP_ITERATION, start);
     }
+    RETURN_IF_ERROR_IN_SCOPE(c, codegen_visit_defer(c));
     PyCodeObject *co = _PyCompile_OptimizeAndAssemble(c, 1);
     _PyCompile_ExitScope(c);
     if (co == NULL) {
@@ -2156,6 +2169,20 @@ codegen_async_for(compiler *c, stmt_ty s)
     VISIT_SEQ(c, stmt, s->v.AsyncFor.orelse);
 
     USE_LABEL(c, end);
+    return SUCCESS;
+}
+
+static int
+codegen_defer(compiler *c, stmt_ty s)
+{
+    location loc = LOC(s);
+
+    if (s->v.Defer.deferred->kind != Call_kind) {
+      return _PyCompile_Error(c, loc, "defer statement must be a call");
+    }
+    RETURN_IF_ERROR(_PyCompile_PushDeferredCall(c, s->v.Defer.deferred));
+
+
     return SUCCESS;
 }
 
@@ -3087,6 +3114,8 @@ codegen_visit_stmt(compiler *c, stmt_ty s)
     case AsyncFor_kind:
         CODEGEN_COND_BLOCK(codegen_async_for, c, s);
         break;
+    case Defer_kind:
+        return codegen_defer(c, s);
     }
 
     return SUCCESS;

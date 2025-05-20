@@ -131,6 +131,7 @@ simple_stmt[stmt_ty] (memo):
     | &'continue' continue_stmt
     | &'global' global_stmt
     | &'nonlocal' nonlocal_stmt
+    | &'defer' defer_stmt
 
 compound_stmt[stmt_ty]:
     | &('def' | '@' | 'async') function_def
@@ -201,6 +202,9 @@ global_stmt[stmt_ty]: 'global' a[asdl_expr_seq*]=','.NAME+ {
 
 nonlocal_stmt[stmt_ty]: 'nonlocal' a[asdl_expr_seq*]=','.NAME+ {
     _PyAST_Nonlocal(CHECK(asdl_identifier_seq*, _PyPegen_map_names_to_ids(p, a)), EXTRA) }
+
+defer_stmt[stmt_ty]:
+    | 'defer' a=expressions &(';' | NEWLINE) { _PyAST_Defer(a, EXTRA) }
 
 del_stmt[stmt_ty]:
     | 'del' a=del_targets &(';' | NEWLINE) { _PyAST_Delete(a, EXTRA) }

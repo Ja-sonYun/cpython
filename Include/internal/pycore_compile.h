@@ -131,6 +131,10 @@ int _PyCompile_EnterScope(struct _PyCompiler *c, identifier name, int scope_type
                           void *key, int lineno, PyObject *private,
                           _PyCompile_CodeUnitMetadata *umd);
 void _PyCompile_ExitScope(struct _PyCompiler *c);
+int _PyCompile_PushDeferredCall(struct _PyCompiler *c, expr_ty e);
+Py_ssize_t _PyCompile_NumDeferredCalls(struct _PyCompiler *c);
+expr_ty _PyCompile_GetDeferredCall(struct _PyCompiler *c, Py_ssize_t i);
+void _PyCompile_ClearDeferredCalls(struct _PyCompiler *c);
 Py_ssize_t _PyCompile_AddConst(struct _PyCompiler *c, PyObject *o);
 _PyInstructionSequence *_PyCompile_InstrSequence(struct _PyCompiler *c);
 int _PyCompile_StartAnnotationSetup(struct _PyCompiler *c);

@@ -61,6 +61,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->Compare_type);
     Py_CLEAR(state->Constant_type);
     Py_CLEAR(state->Continue_type);
+    Py_CLEAR(state->Defer_type);
     Py_CLEAR(state->Del_singleton);
     Py_CLEAR(state->Del_type);
     Py_CLEAR(state->Delete_type);
@@ -205,6 +206,7 @@ void _PyAST_Fini(PyInterpreterState *interp)
     Py_CLEAR(state->decorator_list);
     Py_CLEAR(state->default_value);
     Py_CLEAR(state->defaults);
+    Py_CLEAR(state->deferred);
     Py_CLEAR(state->elt);
     Py_CLEAR(state->elts);
     Py_CLEAR(state->end_col_offset);
@@ -313,6 +315,7 @@ static int init_identifiers(struct ast_state *state)
     if ((state->decorator_list = PyUnicode_InternFromString("decorator_list")) == NULL) return -1;
     if ((state->default_value = PyUnicode_InternFromString("default_value")) == NULL) return -1;
     if ((state->defaults = PyUnicode_InternFromString("defaults")) == NULL) return -1;
+    if ((state->deferred = PyUnicode_InternFromString("deferred")) == NULL) return -1;
     if ((state->elt = PyUnicode_InternFromString("elt")) == NULL) return -1;
     if ((state->elts = PyUnicode_InternFromString("elts")) == NULL) return -1;
     if ((state->end_col_offset = PyUnicode_InternFromString("end_col_offset")) == NULL) return -1;
@@ -541,6 +544,9 @@ static const char * const Nonlocal_fields[]={
 };
 static const char * const Expr_fields[]={
     "value",
+};
+static const char * const Defer_fields[]={
+    "deferred",
 };
 static const char * const expr_attributes[] = {
     "lineno",
@@ -2413,6 +2419,31 @@ add_ast_annotations(struct ast_state *state)
         return 0;
     }
     Py_DECREF(Expr_annotations);
+    PyObject *Defer_annotations = PyDict_New();
+    if (!Defer_annotations) return 0;
+    {
+        PyObject *type = state->expr_type;
+        Py_INCREF(type);
+        cond = PyDict_SetItemString(Defer_annotations, "deferred", type) == 0;
+        Py_DECREF(type);
+        if (!cond) {
+            Py_DECREF(Defer_annotations);
+            return 0;
+        }
+    }
+    cond = PyObject_SetAttrString(state->Defer_type, "_field_types",
+                                  Defer_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(Defer_annotations);
+        return 0;
+    }
+    cond = PyObject_SetAttrString(state->Defer_type, "__annotations__",
+                                  Defer_annotations) == 0;
+    if (!cond) {
+        Py_DECREF(Defer_annotations);
+        return 0;
+    }
+    Py_DECREF(Defer_annotations);
     PyObject *Pass_annotations = PyDict_New();
     if (!Pass_annotations) return 0;
     cond = PyObject_SetAttrString(state->Pass_type, "_field_types",
@@ -6197,6 +6228,7 @@ init_types(void *arg)
         "     | Global(identifier* names)\n"
         "     | Nonlocal(identifier* names)\n"
         "     | Expr(expr value)\n"
+        "     | Defer(expr deferred)\n"
         "     | Pass\n"
         "     | Break\n"
         "     | Continue");
@@ -6345,6 +6377,10 @@ init_types(void *arg)
                                  1,
         "Expr(expr value)");
     if (!state->Expr_type) return -1;
+    state->Defer_type = make_type(state, "Defer", state->stmt_type,
+                                  Defer_fields, 1,
+        "Defer(expr deferred)");
+    if (!state->Defer_type) return -1;
     state->Pass_type = make_type(state, "Pass", state->stmt_type, NULL, 0,
         "Pass");
     if (!state->Pass_type) return -1;
@@ -7657,6 +7693,28 @@ _PyAST_Expr(expr_ty value, int lineno, int col_offset, int end_lineno, int
         return NULL;
     p->kind = Expr_kind;
     p->v.Expr.value = value;
+    p->lineno = lineno;
+    p->col_offset = col_offset;
+    p->end_lineno = end_lineno;
+    p->end_col_offset = end_col_offset;
+    return p;
+}
+
+stmt_ty
+_PyAST_Defer(expr_ty deferred, int lineno, int col_offset, int end_lineno, int
+             end_col_offset, PyArena *arena)
+{
+    stmt_ty p;
+    if (!deferred) {
+        PyErr_SetString(PyExc_ValueError,
+                        "field 'deferred' is required for Defer");
+        return NULL;
+    }
+    p = (stmt_ty)_PyArena_Malloc(arena, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->kind = Defer_kind;
+    p->v.Defer.deferred = deferred;
     p->lineno = lineno;
     p->col_offset = col_offset;
     p->end_lineno = end_lineno;
@@ -9490,6 +9548,16 @@ ast2obj_stmt(struct ast_state *state, void* _o)
         value = ast2obj_expr(state, o->v.Expr.value);
         if (!value) goto failed;
         if (PyObject_SetAttr(result, state->value, value) == -1)
+            goto failed;
+        Py_DECREF(value);
+        break;
+    case Defer_kind:
+        tp = (PyTypeObject *)state->Defer_type;
+        result = PyType_GenericNew(tp, NULL, NULL);
+        if (!result) goto failed;
+        value = ast2obj_expr(state, o->v.Defer.deferred);
+        if (!value) goto failed;
+        if (PyObject_SetAttr(result, state->deferred, value) == -1)
             goto failed;
         Py_DECREF(value);
         break;
@@ -13715,6 +13783,36 @@ obj2ast_stmt(struct ast_state *state, PyObject* obj, stmt_ty* out, PyArena*
         }
         *out = _PyAST_Expr(value, lineno, col_offset, end_lineno,
                            end_col_offset, arena);
+        if (*out == NULL) goto failed;
+        return 0;
+    }
+    tp = state->Defer_type;
+    isinstance = PyObject_IsInstance(obj, tp);
+    if (isinstance == -1) {
+        return -1;
+    }
+    if (isinstance) {
+        expr_ty deferred;
+
+        if (PyObject_GetOptionalAttr(obj, state->deferred, &tmp) < 0) {
+            return -1;
+        }
+        if (tmp == NULL) {
+            PyErr_SetString(PyExc_TypeError, "required field \"deferred\" missing from Defer");
+            return -1;
+        }
+        else {
+            int res;
+            if (_Py_EnterRecursiveCall(" while traversing 'Defer' node")) {
+                goto failed;
+            }
+            res = obj2ast_expr(state, tmp, &deferred, arena);
+            _Py_LeaveRecursiveCall();
+            if (res != 0) goto failed;
+            Py_CLEAR(tmp);
+        }
+        *out = _PyAST_Defer(deferred, lineno, col_offset, end_lineno,
+                            end_col_offset, arena);
         if (*out == NULL) goto failed;
         return 0;
     }
@@ -18066,6 +18164,9 @@ astmodule_exec(PyObject *m)
         return -1;
     }
     if (PyModule_AddObjectRef(m, "Expr", state->Expr_type) < 0) {
+        return -1;
+    }
+    if (PyModule_AddObjectRef(m, "Defer", state->Defer_type) < 0) {
         return -1;
     }
     if (PyModule_AddObjectRef(m, "Pass", state->Pass_type) < 0) {

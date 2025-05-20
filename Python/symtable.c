@@ -2265,6 +2265,12 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         LEAVE_CONDITIONAL_BLOCK(st);
         break;
     }
+    case Defer_kind: {
+        if (!symtable_visit_expr(st, s->v.Defer.deferred)) {
+            return 0;
+        }
+        break;
+    }
     }
     LEAVE_RECURSIVE();
     return 1;
